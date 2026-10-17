@@ -9,7 +9,9 @@ from setforge.camelot import CamelotKey, parse_key
 
 class CuePoint(BaseModel):
     name: str = ""
+    type: int = Field(default=0, description="0 = cue, 4 = boucle (voir aussi fade-in/out, load)")
     start: float = Field(ge=0, description="Position en secondes")
+    end: float | None = Field(default=None, ge=0, description="Fin de boucle en secondes")
     num: int = Field(default=-1, description="-1 = memory cue, 0-7 = hot cue")
 
 

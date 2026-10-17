@@ -16,7 +16,7 @@ _MAJOR = {
 }  # fmt: skip
 
 _CAMELOT_RE = re.compile(r"^(1[0-2]|[1-9])([AB])$")
-_KEY_RE = re.compile(r"^([A-G][#b]?)\s*(m|min|minor|maj|major)?$")
+_KEY_RE = re.compile(r"^([A-G][#b]?)\s*(m|(?i:min|minor|maj|major))?$")
 
 
 @dataclass(frozen=True, order=True)
@@ -39,7 +39,7 @@ def parse_key(value: str) -> CamelotKey | None:
     if not match:
         return None
     tonic, mode = match.groups()
-    minor = mode in ("m", "min", "minor")
+    minor = mode is not None and mode.lower() in ("m", "min", "minor")
     number = (_MINOR if minor else _MAJOR).get(tonic)
     if number is None:  # enharmonies rares (Cb, E#...) non gérées
         return None

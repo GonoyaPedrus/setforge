@@ -9,19 +9,34 @@ from pathlib import Path
 from setforge.models import CuePoint, Track
 
 
-def _float(value: str | None) -> float | None:
-    if value is None or value == "":
+def _number(value: str | None) -> float | None:
+    """Lit un nombre Rekordbox ; accepte la virgule décimale, ignore les valeurs invalides."""
+    if not value:
         return None
-    number = float(value)
-    return number if number > 0 else None
+    try:
+        return float(value.replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _int(value: str | None, default: int) -> int:
+    number = _number(value)
+    return default if number is None else int(number)
+
+
+def _positive(value: str | None) -> float | None:
+    number = _number(value)
+    return number if number is not None and number > 0 else None
 
 
 def _parse_track(node: ET.Element) -> Track:
     cues = [
         CuePoint(
             name=mark.get("Name", ""),
-            start=float(mark.get("Start", "0")),
-            num=int(mark.get("Num", "-1")),
+            type=_int(mark.get("Type"), default=0),
+            start=max(_number(mark.get("Start")) or 0.0, 0.0),
+            end=_positive(mark.get("End")),
+            num=_int(mark.get("Num"), default=-1),
         )
         for mark in node.iter("POSITION_MARK")
     ]
@@ -30,8 +45,8 @@ def _parse_track(node: ET.Element) -> Track:
         title=node.get("Name", ""),
         artist=node.get("Artist", ""),
         location=node.get("Location", ""),
-        duration=_float(node.get("TotalTime")) or 0,
-        bpm=_float(node.get("AverageBpm")),
+        duration=_positive(node.get("TotalTime")) or 0,
+        bpm=_positive(node.get("AverageBpm")),
         key=node.get("Tonality") or None,
         genre=node.get("Genre", ""),
         cues=cues,
@@ -48,16 +63,21 @@ def load_collection(path: Path) -> list[Track]:
 
 
 def write_playlist(tracks: Iterable[Track], name: str, path: Path) -> None:
-    """Écrit un XML importable dans Rekordbox contenant une playlist ordonnée."""
+    """Écrit un XML importable dans Rekordbox contenant une playlist ordonnée.
+
+    Un morceau joué deux fois n'apparaît qu'une fois dans COLLECTION, deux fois dans la playlist.
+    """
     ordered = list(tracks)
+    unique = list({track.track_id: track for track in ordered}.values())
     root = ET.Element("DJ_PLAYLISTS", Version="1.0.0")
     ET.SubElement(root, "PRODUCT", Name="SetForge", Version="0.1.0", Company="")
-    collection = ET.SubElement(root, "COLLECTION", Entries=str(len(ordered)))
-    for track in ordered:
+    collection = ET.SubElement(root, "COLLECTION", Entries=str(len(unique)))
+    for track in unique:
         attrs = {
             "TrackID": track.track_id,
             "Name": track.title,
             "Artist": track.artist,
+            "Genre": track.genre,
             "Location": track.location,
             "TotalTime": str(round(track.duration)),
         }
@@ -67,14 +87,11 @@ def write_playlist(tracks: Iterable[Track], name: str, path: Path) -> None:
             attrs["Tonality"] = track.key
         node = ET.SubElement(collection, "TRACK", attrs)
         for cue in track.cues:
-            ET.SubElement(
-                node,
-                "POSITION_MARK",
-                Name=cue.name,
-                Type="0",
-                Start=f"{cue.start:.3f}",
-                Num=str(cue.num),
-            )
+            mark = {"Name": cue.name, "Type": str(cue.type), "Start": f"{cue.start:.3f}"}
+            if cue.end is not None:
+                mark["End"] = f"{cue.end:.3f}"
+            mark["Num"] = str(cue.num)
+            ET.SubElement(node, "POSITION_MARK", mark)
     playlists = ET.SubElement(root, "PLAYLISTS")
     folder = ET.SubElement(playlists, "NODE", Type="0", Name="ROOT", Count="1")
     playlist = ET.SubElement(

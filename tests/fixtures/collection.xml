@@ -6,7 +6,9 @@
       <TEMPO Inizio="0.025" Bpm="124.00" Metro="4/4" Battito="1"/>
       <POSITION_MARK Name="Drop" Type="0" Start="61.950" Num="0"/>
     </TRACK>
-    <TRACK TrackID="2" Name="Low Tide" Artist="Artist B" Genre="Deep House" TotalTime="401" AverageBpm="123.00" Tonality="Em" Location="file://localhost/Music/low%20tide.flac"/>
+    <TRACK TrackID="2" Name="Low Tide" Artist="Artist B" Genre="Deep House" TotalTime="401" AverageBpm="123.00" Tonality="Em" Location="file://localhost/Music/low%20tide.flac">
+      <POSITION_MARK Name="Outro loop" Type="4" Start="32.000" End="40.000" Num="1"/>
+    </TRACK>
     <TRACK TrackID="3" Name="Sunrise" Artist="Artist C" Genre="House" TotalTime="330" AverageBpm="126.00" Tonality="C" Location="file://localhost/Music/sunrise.mp3"/>
     <TRACK TrackID="4" Name="Breakbeat Tool" Artist="Artist D" Genre="Breaks" TotalTime="280" AverageBpm="140.00" Tonality="F#" Location="file://localhost/Music/tool.wav"/>
   </COLLECTION>

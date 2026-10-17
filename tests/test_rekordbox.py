@@ -23,3 +23,29 @@ def test_playlist_round_trip(collection_xml: Path, tmp_path: Path) -> None:
     assert reloaded[3].cues == tracks[0].cues
     assert reloaded[3].location == tracks[0].location
     assert 'Name="SetForge test"' in out.read_text(encoding="utf-8")
+
+
+def test_loops_genre_and_duplicates_survive_export(collection_xml: Path, tmp_path: Path) -> None:
+    tracks = load_collection(collection_xml)
+    loop = tracks[1].cues[0]
+    assert (loop.type, loop.end, loop.num) == (4, 40.0, 1)
+
+    out = tmp_path / "set.xml"
+    write_playlist([tracks[0], tracks[1], tracks[0]], "Repeat", out)
+    reloaded = load_collection(out)
+    assert [t.track_id for t in reloaded] == ["1", "2"]
+    assert reloaded[1].cues == tracks[1].cues
+    assert reloaded[0].genre == "Deep House"
+    assert out.read_text(encoding="utf-8").count('Key="1"') == 2
+
+
+def test_tolerates_malformed_numbers(tmp_path: Path) -> None:
+    xml = tmp_path / "bad.xml"
+    xml.write_text(
+        '<DJ_PLAYLISTS><COLLECTION><TRACK TrackID="1" Name="x" TotalTime="n/a" AverageBpm="124,5">'
+        '<POSITION_MARK Start="61,950" Num="0"/></TRACK></COLLECTION></DJ_PLAYLISTS>',
+        encoding="utf-8",
+    )
+    track = load_collection(xml)[0]
+    assert (track.duration, track.bpm) == (0, 124.5)
+    assert (track.cues[0].start, track.cues[0].num) == (61.95, 0)

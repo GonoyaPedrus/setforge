@@ -15,6 +15,8 @@ from setforge.camelot import CamelotKey, compatibility, parse_key
         ("8a", "8A"),
         ("12B", "12B"),
         ("E♭", "5B"),
+        ("C# MIN", "12A"),
+        ("Fmaj", "7B"),
     ],
 )
 def test_parse_key(raw: str, expected: str) -> None:

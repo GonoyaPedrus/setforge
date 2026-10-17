@@ -24,3 +24,17 @@ def test_next(collection_xml: Path) -> None:
 def test_next_unknown_track(collection_xml: Path) -> None:
     result = runner.invoke(app, ["next", "--xml", str(collection_xml), "introuvable"])
     assert result.exit_code == 1
+
+
+def test_next_ambiguous_query(collection_xml: Path) -> None:
+    result = runner.invoke(app, ["next", "--xml", str(collection_xml), "artist"])
+    assert result.exit_code == 1
+    assert "ambigu" in result.output
+
+
+def test_unreadable_xml(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.xml"
+    bad.write_text("<not xml", encoding="utf-8")
+    result = runner.invoke(app, ["stats", "--xml", str(bad)])
+    assert result.exit_code == 1
+    assert "Impossible de lire" in result.output
