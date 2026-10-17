@@ -1,0 +1,103 @@
+"""Lecture et écriture du format Rekordbox XML (Fichier > Exporter la collection en XML)."""
+
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+from collections.abc import Iterable
+from pathlib import Path
+
+from setforge.models import CuePoint, Track
+
+
+def _number(value: str | None) -> float | None:
+    """Lit un nombre Rekordbox ; accepte la virgule décimale, ignore les valeurs invalides."""
+    if not value:
+        return None
+    try:
+        return float(value.replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _int(value: str | None, default: int) -> int:
+    number = _number(value)
+    return default if number is None else int(number)
+
+
+def _positive(value: str | None) -> float | None:
+    number = _number(value)
+    return number if number is not None and number > 0 else None
+
+
+def _parse_track(node: ET.Element) -> Track:
+    cues = [
+        CuePoint(
+            name=mark.get("Name", ""),
+            type=_int(mark.get("Type"), default=0),
+            start=max(_number(mark.get("Start")) or 0.0, 0.0),
+            end=_positive(mark.get("End")),
+            num=_int(mark.get("Num"), default=-1),
+        )
+        for mark in node.iter("POSITION_MARK")
+    ]
+    return Track(
+        track_id=node.get("TrackID", ""),
+        title=node.get("Name", ""),
+        artist=node.get("Artist", ""),
+        location=node.get("Location", ""),
+        duration=_positive(node.get("TotalTime")) or 0,
+        bpm=_positive(node.get("AverageBpm")),
+        key=node.get("Tonality") or None,
+        genre=node.get("Genre", ""),
+        cues=cues,
+    )
+
+
+def load_collection(path: Path) -> list[Track]:
+    """Charge toutes les pistes de la section COLLECTION."""
+    root = ET.parse(path).getroot()
+    collection = root.find("COLLECTION")
+    if collection is None:
+        raise ValueError(f"{path} n'est pas un export Rekordbox XML (COLLECTION absente)")
+    return [_parse_track(node) for node in collection.findall("TRACK")]
+
+
+def write_playlist(tracks: Iterable[Track], name: str, path: Path) -> None:
+    """Écrit un XML importable dans Rekordbox contenant une playlist ordonnée.
+
+    Un morceau joué deux fois n'apparaît qu'une fois dans COLLECTION, deux fois dans la playlist.
+    """
+    ordered = list(tracks)
+    unique = list({track.track_id: track for track in ordered}.values())
+    root = ET.Element("DJ_PLAYLISTS", Version="1.0.0")
+    ET.SubElement(root, "PRODUCT", Name="SetForge", Version="0.1.0", Company="")
+    collection = ET.SubElement(root, "COLLECTION", Entries=str(len(unique)))
+    for track in unique:
+        attrs = {
+            "TrackID": track.track_id,
+            "Name": track.title,
+            "Artist": track.artist,
+            "Genre": track.genre,
+            "Location": track.location,
+            "TotalTime": str(round(track.duration)),
+        }
+        if track.bpm:
+            attrs["AverageBpm"] = f"{track.bpm:.2f}"
+        if track.key:
+            attrs["Tonality"] = track.key
+        node = ET.SubElement(collection, "TRACK", attrs)
+        for cue in track.cues:
+            mark = {"Name": cue.name, "Type": str(cue.type), "Start": f"{cue.start:.3f}"}
+            if cue.end is not None:
+                mark["End"] = f"{cue.end:.3f}"
+            mark["Num"] = str(cue.num)
+            ET.SubElement(node, "POSITION_MARK", mark)
+    playlists = ET.SubElement(root, "PLAYLISTS")
+    folder = ET.SubElement(playlists, "NODE", Type="0", Name="ROOT", Count="1")
+    playlist = ET.SubElement(
+        folder, "NODE", Name=name, Type="1", KeyType="0", Entries=str(len(ordered))
+    )
+    for track in ordered:
+        ET.SubElement(playlist, "TRACK", Key=track.track_id)
+    ET.indent(root)
+    ET.ElementTree(root).write(path, encoding="UTF-8", xml_declaration=True)
