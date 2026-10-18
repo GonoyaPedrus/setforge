@@ -56,4 +56,5 @@ def test_location_to_path() -> None:
         "/Users/me/Music/a b.mp3"
     )
     assert location_to_path("file://localhost/C:/Music/x.flac") == Path("C:/Music/x.flac")
+    assert location_to_path("file://nas/Music/x.mp3") == Path("//nas/Music/x.mp3")
     assert location_to_path("https://example.com/x.mp3") is None

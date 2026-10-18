@@ -59,7 +59,16 @@ def test_stats_reads_energy_from_db(collection_xml: Path, tmp_path: Path) -> Non
                 "low_ratio": 0.3,
             },
         )
-        store.refresh_energy(connection)
+        store.refresh_energy(connection, {"file://localhost/Music/night%20drive.mp3"})
     result = runner.invoke(app, ["stats", "--xml", str(collection_xml), "--db", str(db)])
     assert result.exit_code == 0
     assert "1 avec énergie" in result.output
+
+
+def test_unreadable_db_falls_back_to_rekordbox(collection_xml: Path, tmp_path: Path) -> None:
+    db = tmp_path / "lib.sqlite"
+    db.write_text("ceci n'est pas une base SQLite", encoding="utf-8")
+    result = runner.invoke(app, ["stats", "--xml", str(collection_xml), "--db", str(db)])
+    assert result.exit_code == 0
+    assert "4 pistes" in result.output
+    assert "Analyses ignorées" in result.output

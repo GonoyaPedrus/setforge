@@ -56,11 +56,16 @@ def _parse_track(node: ET.Element) -> Track:
 
 
 def location_to_path(location: str) -> Path | None:
-    """Convertit ``file://localhost/Users/...`` ou ``file://localhost/C:/...`` en chemin local."""
+    """Convertit ``file://localhost/Users/...`` ou ``file://localhost/C:/...`` en chemin local.
+
+    Un hôte réel (``file://nas/Music/...``) donne un chemin réseau ``//nas/Music/...``.
+    """
     parsed = urlparse(location)
     if parsed.scheme != "file":
         return None
     path = unquote(parsed.path)
+    if parsed.netloc not in ("", "localhost"):
+        return Path(f"//{parsed.netloc}{path}")
     if re.match(r"^/[A-Za-z]:/", path):  # chemin Windows
         path = path[1:]
     return Path(path)

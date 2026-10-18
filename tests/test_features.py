@@ -3,7 +3,16 @@ import pytest
 
 pytest.importorskip("librosa")
 
-from setforge.analysis.features import SAMPLE_RATE, analyze_signal, estimate_key, fold_bpm
+from dataclasses import fields
+
+from setforge import store
+from setforge.analysis.features import (
+    SAMPLE_RATE,
+    AudioFeatures,
+    analyze_signal,
+    estimate_key,
+    fold_bpm,
+)
 
 A, C, E = 220.0, 261.63, 329.63
 
@@ -51,3 +60,24 @@ def test_analyze_signal_finds_tempo_and_key() -> None:
 def test_analyze_signal_rejects_short_audio() -> None:
     with pytest.raises(ValueError):
         analyze_signal(np.zeros(100, dtype=np.float32))
+
+
+def test_estimate_key_on_flat_chroma() -> None:
+    assert estimate_key(np.ones((12, 4))) == (None, 0.0)
+
+
+def test_relative_key_does_not_lower_confidence() -> None:
+    chroma = np.full((12, 4), 0.1)
+    chroma[[9, 0, 4, 7]] = 1.0  # A, C, E, G : Am7, très proche de C majeur
+    key, confidence = estimate_key(chroma)
+    assert key in ("Am", "C")
+    assert confidence > store.MIN_KEY_CONFIDENCE
+
+
+def test_silence_has_no_tempo_or_key() -> None:
+    features = analyze_signal(np.zeros(SAMPLE_RATE * 3, dtype=np.float32))
+    assert (features.bpm, features.key) == (None, None)
+
+
+def test_store_fields_match_audio_features() -> None:
+    assert tuple(f.name for f in fields(AudioFeatures)) == store.FEATURE_FIELDS

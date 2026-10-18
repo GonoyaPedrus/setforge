@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS analysis (
     mtime REAL NOT NULL,
     size INTEGER NOT NULL,
     version INTEGER NOT NULL,
-    bpm REAL NOT NULL,
-    key TEXT NOT NULL,
+    bpm REAL,
+    key TEXT,
     key_confidence REAL NOT NULL,
     rms_db REAL NOT NULL,
     onset_rate REAL NOT NULL,
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS analysis (
 );
 """
 
+# Champs de ``AudioFeatures`` (copiés ici pour ne pas importer librosa ; un test vérifie l'accord).
 FEATURE_FIELDS = (
     "bpm",
     "key",
@@ -41,13 +42,17 @@ FEATURE_FIELDS = (
 )
 # Descripteurs combinés dans le score d'énergie, par rang centile sur la bibliothèque.
 _ENERGY_COLUMNS = ("rms_db", "onset_rate", "flux")
+# En dessous, la tonalité estimée est trop incertaine pour servir de secours.
+MIN_KEY_CONFIDENCE = 0.02
+
+Fingerprint = tuple[float, int, int]  # mtime, taille, version d'analyse
 
 
 @dataclass(frozen=True)
 class StoredAnalysis:
     location: str
-    bpm: float
-    key: str
+    bpm: float | None
+    key: str | None
     key_confidence: float
     energy: float | None
 
@@ -64,11 +69,9 @@ def connect(db: Path) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
-def is_fresh(connection: sqlite3.Connection, location: str, mtime: float, size: int) -> bool:
-    row = connection.execute(
-        "SELECT mtime, size, version FROM analysis WHERE location = ?", (location,)
-    ).fetchone()
-    return row is not None and tuple(row) == (mtime, size, ANALYSIS_VERSION)
+def fingerprints(connection: sqlite3.Connection) -> dict[str, Fingerprint]:
+    rows = connection.execute("SELECT location, mtime, size, version FROM analysis")
+    return {location: (mtime, size, version) for location, mtime, size, version in rows}
 
 
 def save(
@@ -76,7 +79,7 @@ def save(
     location: str,
     mtime: float,
     size: int,
-    features: Mapping[str, float | str],
+    features: Mapping[str, float | str | None],
 ) -> None:
     """Enregistre les champs ``FEATURE_FIELDS`` d'une analyse."""
     values = {name: features[name] for name in FEATURE_FIELDS}
@@ -102,11 +105,20 @@ def _percentiles(values: list[float]) -> list[float]:
     return [ranks[value] for value in values]
 
 
-def refresh_energy(connection: sqlite3.Connection) -> None:
-    """Recalcule l'énergie (0-1) de toute la bibliothèque, relative aux autres morceaux."""
-    rows = connection.execute(
-        f"SELECT location, {', '.join(_ENERGY_COLUMNS)} FROM analysis"
-    ).fetchall()
+def refresh_energy(connection: sqlite3.Connection, locations: Collection[str]) -> None:
+    """Recalcule l'énergie (0-1) des morceaux de ``locations``, relative à ces seuls morceaux.
+
+    Les analyses hors de la collection (fichiers supprimés, autre bibliothèque) perdent leur
+    énergie au lieu de fausser le classement.
+    """
+    connection.execute("UPDATE analysis SET energy = NULL")
+    rows = [
+        row
+        for row in connection.execute(
+            f"SELECT location, {', '.join(_ENERGY_COLUMNS)} FROM analysis"
+        )
+        if row[0] in locations
+    ]
     if not rows:
         return
     columns = [_percentiles([row[i + 1] for row in rows]) for i in range(len(_ENERGY_COLUMNS))]
@@ -134,11 +146,12 @@ def enrich(tracks: Iterable[Track], analyses: dict[str, StoredAnalysis]) -> list
         if found is None:
             enriched.append(track)
             continue
+        fallback_key = found.key if found.key_confidence >= MIN_KEY_CONFIDENCE else None
         enriched.append(
             track.model_copy(
                 update={
                     "bpm": track.bpm or found.bpm,
-                    "key": track.key or found.key,
+                    "key": track.key or fallback_key,
                     "energy": found.energy,
                 }
             )

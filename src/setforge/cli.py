@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Annotated
@@ -39,8 +40,12 @@ def _load(xml: Path, db: Path | None = None) -> list[Track]:
         raise typer.Exit(code=1) from error
     if db is None or not db.is_file():
         return tracks
-    with store.connect(db) as connection:
-        return store.enrich(tracks, store.load_analyses(connection))
+    try:
+        with store.connect(db) as connection:
+            return store.enrich(tracks, store.load_analyses(connection))
+    except sqlite3.Error as error:
+        typer.echo(f"Analyses ignorées, base {db} illisible : {error}", err=True)
+        return tracks
 
 
 def _find(tracks: list[Track], query: str) -> Track:

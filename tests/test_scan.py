@@ -47,3 +47,12 @@ def test_scan_analyzes_caches_and_reports(tmp_path: Path) -> None:
 
     again = scan(tracks, db, analyze=_fake_analyze)
     assert (again.analyzed, again.cached) == (0, 2)
+
+
+def test_parallel_scan(tmp_path: Path) -> None:
+    files = [tmp_path / f"{i}.mp3" for i in range(4)]
+    for i, path in enumerate(files):
+        path.write_text(str(-20 + i))
+    tracks = [_track(str(i), path) for i, path in enumerate(files)]
+    report = scan(tracks, tmp_path / "lib.sqlite", workers=2, analyze=_fake_analyze)
+    assert (report.analyzed, report.failed) == (4, {})
