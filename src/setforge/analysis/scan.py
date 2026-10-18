@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import closing
@@ -38,7 +39,9 @@ def _run(jobs: dict[str, Path], analyze: Analyzer, workers: int) -> Generator[tu
         for location, path in jobs.items():
             yield location, _attempt(analyze, path)
         return
-    pool = ProcessPoolExecutor(max_workers=workers)
+    # « spawn » : les workers repartent d'un interpréteur neuf au lieu d'hériter par fork
+    # de la mémoire et des threads du parent (torch, CLAP, LanceDB), source de blocages.
+    pool = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
     try:
         futures = {pool.submit(_attempt, analyze, path): loc for loc, path in jobs.items()}
         for future in as_completed(futures):
