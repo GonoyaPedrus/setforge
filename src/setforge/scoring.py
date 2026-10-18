@@ -1,8 +1,8 @@
-"""Score de transition entre deux morceaux (MVP sans embeddings)."""
+"""Score de transition entre deux morceaux."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from setforge.camelot import compatibility
@@ -19,6 +19,7 @@ class Weights:
     key: float = 0.45
     bpm: float = 0.40
     energy: float = 0.15
+    style: float = 0.30
 
 
 @dataclass
@@ -35,8 +36,17 @@ def bpm_delta_pct(current: float, candidate: float) -> float:
 
 
 def score_transition(
-    current: Track, candidate: Track, weights: Weights | None = None
+    current: Track,
+    candidate: Track,
+    weights: Weights | None = None,
+    similarity: float | None = None,
+    use_style: bool = False,
 ) -> Transition:
+    """Score entre 0 et 1.
+
+    ``similarity`` est la similarité cosinus CLAP. Avec ``use_style``, une similarité inconnue
+    (morceau pas encore indexé) reçoit le score neutre au lieu d'être ignorée.
+    """
     weights = weights or Weights()
     reasons: list[str] = []
     total = 0.0
@@ -71,11 +81,39 @@ def score_transition(
         used += weights.energy
         reasons.append(f"énergie {jump:+.2f}")
 
+    if similarity is not None:
+        total += weights.style * max(0.0, similarity)
+        used += weights.style
+        reasons.append(f"style {similarity:.2f}")
+    elif use_style:
+        total += weights.style * UNKNOWN_SCORE
+        used += weights.style
+        reasons.append("style inconnu")
+
     return Transition(candidate=candidate, score=total / used if used else 0.0, reasons=reasons)
 
 
-def rank_next(current: Track, library: Iterable[Track], limit: int = 10) -> list[Transition]:
-    """Classe les morceaux de la bibliothèque pour enchaîner après ``current``."""
-    transitions = [score_transition(current, track) for track in library if track is not current]
+def rank_next(
+    current: Track,
+    library: Iterable[Track],
+    limit: int = 10,
+    similarities: Mapping[str, float] | None = None,
+) -> list[Transition]:
+    """Classe les morceaux de la bibliothèque pour enchaîner après ``current``.
+
+    ``similarities`` associe l'emplacement de chaque morceau à sa similarité avec ``current`` ;
+    vide ou absent, le style n'entre pas dans le score.
+    """
+    similarities = similarities or {}
+    transitions = [
+        score_transition(
+            current,
+            track,
+            similarity=similarities.get(track.location),
+            use_style=bool(similarities),
+        )
+        for track in library
+        if track is not current
+    ]
     transitions.sort(key=lambda t: t.score, reverse=True)
     return transitions[:limit]

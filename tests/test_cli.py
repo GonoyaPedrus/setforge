@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from setforge import store
@@ -72,3 +73,63 @@ def test_unreadable_db_falls_back_to_rekordbox(collection_xml: Path, tmp_path: P
     assert result.exit_code == 0
     assert "4 pistes" in result.output
     assert "Analyses ignorées" in result.output
+
+
+def _index_fixture(tmp_path: Path) -> Path:
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("lancedb")
+    from setforge.index import Embedding, TrackIndex
+
+    path = tmp_path / "idx"
+    vectors = {
+        "night%20drive.mp3": [1.0, 0.0],
+        "low%20tide.flac": [0.0, 1.0],
+        "sunrise.mp3": [1.0, 0.0],
+    }
+    TrackIndex(path).upsert(
+        Embedding(f"file://localhost/Music/{name}", 1.0, 1, "m", np.array(v, dtype=np.float32))
+        for name, v in vectors.items()
+    )
+    return path
+
+
+def test_next_uses_style_similarity(collection_xml: Path, tmp_path: Path) -> None:
+    index = _index_fixture(tmp_path)
+    args = ["next", "--xml", str(collection_xml), "night drive", "--index", str(index)]
+    result = runner.invoke(app, [*args, "--db", str(tmp_path / "none.sqlite")])
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "Artist C - Sunrise" in lines[1]  # même style, malgré une tonalité moins proche
+    assert "style 1.00" in lines[1]
+    assert "style inconnu" in lines[3]
+
+
+def test_search_filters_by_bpm(
+    collection_xml: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    np = pytest.importorskip("numpy")
+    from setforge import embeddings
+
+    class FakeEmbedder:
+        def embed_text(self, text: str) -> object:
+            return np.array([0.0, 1.0], dtype=np.float32)
+
+    monkeypatch.setattr(embeddings.ClapEmbedder, "load", classmethod(lambda cls: FakeEmbedder()))
+    index = _index_fixture(tmp_path)
+    base = ["search", "--xml", str(collection_xml), "deep", "--index", str(index)]
+    base += ["--db", str(tmp_path / "none.sqlite")]
+
+    result = runner.invoke(app, base)
+    assert result.exit_code == 0, result.output
+    assert "Artist B - Low Tide" in result.stdout.splitlines()[0]
+
+    filtered = runner.invoke(app, [*base, "--bpm", "126", "--tolerance", "1"])
+    assert "Sunrise" in filtered.stdout.splitlines()[0]
+    assert "Low Tide" not in filtered.stdout
+
+
+def test_search_without_index(collection_xml: Path, tmp_path: Path) -> None:
+    args = ["search", "--xml", str(collection_xml), "deep", "--index", str(tmp_path / "x")]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "scan --embeddings" in result.output

@@ -5,15 +5,21 @@ from __future__ import annotations
 import os
 import sqlite3
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from setforge import store
 from setforge.models import Track
+
+if TYPE_CHECKING:
+    from setforge.embeddings import ClapEmbedder
+    from setforge.index import TrackIndex
+from setforge.camelot import parse_key
 from setforge.rekordbox import load_collection
-from setforge.scoring import rank_next
+from setforge.scoring import bpm_delta_pct, rank_next
 
 app = typer.Typer(help="SetForge, assistant DJ.", no_args_is_help=True)
 
@@ -29,6 +35,39 @@ DbOption = Annotated[
     Path,
     typer.Option("--db", dir_okay=False, help="Base SQLite des analyses (env SETFORGE_DB)"),
 ]
+DEFAULT_INDEX = Path(os.environ.get("SETFORGE_INDEX", Path.home() / ".setforge" / "index"))
+IndexOption = Annotated[
+    Path,
+    typer.Option(
+        "--index", file_okay=False, help="Index LanceDB des embeddings (env SETFORGE_INDEX)"
+    ),
+]
+
+
+def _missing_extra(extra: str) -> typer.Exit:
+    typer.echo(f"Cette commande demande l'extra « {extra} » : uv sync --extra {extra}", err=True)
+    return typer.Exit(code=1)
+
+
+def _load_clap() -> ClapEmbedder:
+    from setforge.embeddings import ClapEmbedder
+
+    typer.echo("Chargement du modèle CLAP (téléchargé au premier lancement)...", err=True)
+    try:
+        return ClapEmbedder.load()
+    except ImportError as error:
+        raise _missing_extra("clap") from error
+
+
+def _open_index(path: Path) -> TrackIndex | None:
+    """Index existant, ou None s'il n'a jamais été créé ou si LanceDB n'est pas installé."""
+    if not path.is_dir():
+        return None
+    try:
+        from setforge.index import TrackIndex
+    except ImportError:
+        return None
+    return TrackIndex(path)
 
 
 def _load(xml: Path, db: Path | None = None) -> list[Track]:
@@ -82,23 +121,44 @@ def scan(
     xml: XmlOption,
     db: DbOption = DEFAULT_DB,
     workers: Annotated[int, typer.Option(min=1, help="Processus d'analyse en parallèle")] = 1,
+    embeddings: Annotated[
+        bool, typer.Option(help="Calcule aussi les embeddings CLAP (extras clap et index)")
+    ] = False,
+    index: IndexOption = DEFAULT_INDEX,
 ) -> None:
     """Analyse les fichiers audio de la collection (énergie, BPM et tonalité de secours)."""
     try:
         from setforge.analysis.scan import scan as run_scan
     except ImportError as error:
-        typer.echo("L'analyse audio demande l'extra « audio » : uv sync --extra audio", err=True)
-        raise typer.Exit(code=1) from error
+        raise _missing_extra("audio") from error
+    if embeddings:
+        try:
+            from setforge.analysis.embed import embed_library
+            from setforge.index import TrackIndex
+        except ImportError as error:
+            raise _missing_extra("index") from error
+        embedder = _load_clap()  # avant le scan : une dépendance manquante échoue tout de suite
 
-    def show(done: int, total: int) -> None:
-        typer.echo(f"\rAnalyse {done}/{total}", nl=done == total)
+    def show(step: str) -> Callable[[int, int], None]:
+        return lambda done, total: typer.echo(f"\r{step} {done}/{total}", nl=done == total)
 
-    report = run_scan(_load(xml), db, workers=workers, progress=show)
+    tracks = _load(xml)
+    report = run_scan(tracks, db, workers=workers, progress=show("Analyse"))
     typer.echo(
         f"{report.analyzed} analysés, {report.cached} déjà à jour, "
         f"{len(report.missing)} fichiers introuvables, {len(report.failed)} en échec"
     )
     for location, message in report.failed.items():
+        typer.echo(f"  échec {location} : {message}", err=True)
+    if not embeddings:
+        return
+
+    embedded = embed_library(tracks, TrackIndex(index), embedder, progress=show("Embeddings"))
+    typer.echo(
+        f"{embedded.embedded} embeddings calculés, {embedded.cached} déjà à jour, "
+        f"{len(embedded.failed)} en échec"
+    )
+    for location, message in embedded.failed.items():
         typer.echo(f"  échec {location} : {message}", err=True)
 
 
@@ -108,11 +168,67 @@ def next_track(
     query: Annotated[str, typer.Argument(help="Titre ou « artiste - titre » du morceau joué")],
     limit: Annotated[int, typer.Option(min=1)] = 10,
     db: DbOption = DEFAULT_DB,
+    index: IndexOption = DEFAULT_INDEX,
 ) -> None:
     """Propose les morceaux qui enchaînent le mieux après QUERY."""
     tracks = _load(xml, db)
     current = _find(tracks, query)
+    scores: dict[str, float] = {}
+    track_index = _open_index(index)
+    if track_index is not None:
+        from setforge.index import similarities
+
+        vectors = track_index.vectors()
+        if current.location in vectors:
+            scores = similarities(vectors[current.location], vectors)
     typer.echo(f"Après : {current.label}")
-    for rank, transition in enumerate(rank_next(current, tracks, limit), start=1):
+    for rank, transition in enumerate(rank_next(current, tracks, limit, scores), start=1):
         reasons = ", ".join(transition.reasons)
         typer.echo(f"{rank:>2}. {transition.score:.2f}  {transition.candidate.label}  [{reasons}]")
+
+
+@app.command()
+def search(
+    xml: XmlOption,
+    query: Annotated[str, typer.Argument(help="Description libre, ex. « deep house sombre »")],
+    bpm: Annotated[float | None, typer.Option(min=1, help="Tempo visé")] = None,
+    tolerance: Annotated[float, typer.Option(min=0, help="Écart de BPM accepté")] = 3.0,
+    key: Annotated[str | None, typer.Option(help="Tonalité, ex. 8A ou Am")] = None,
+    limit: Annotated[int, typer.Option(min=1)] = 10,
+    db: DbOption = DEFAULT_DB,
+    index: IndexOption = DEFAULT_INDEX,
+) -> None:
+    """Cherche des morceaux par description, filtrés par BPM et tonalité."""
+    track_index = _open_index(index)
+    if track_index is None or not len(track_index):
+        typer.echo("Index vide : lance d'abord « setforge scan --embeddings ».", err=True)
+        raise typer.Exit(code=1)
+    wanted_key = parse_key(key) if key else None
+    if key and wanted_key is None:
+        typer.echo(f"Tonalité « {key} » non reconnue.", err=True)
+        raise typer.Exit(code=1)
+
+    by_location = {t.location: t for t in _load(xml, db)}
+    vector = _load_clap().embed_text(query)
+    # Les filtres s'appliquent après la recherche : on prend large puis on trie.
+    hits = track_index.search(vector, limit=max(limit * 20, 200))
+    shown = 0
+    for location, similarity in hits:
+        track = by_location.get(location)
+        if track is None:
+            continue
+        if bpm is not None and (
+            track.bpm is None or abs(bpm_delta_pct(bpm, track.bpm)) * bpm / 100 > tolerance
+        ):
+            continue
+        if wanted_key is not None and track.camelot != wanted_key:
+            continue
+        shown += 1
+        details = f"{track.bpm:.1f} BPM" if track.bpm else "BPM inconnu"
+        typer.echo(
+            f"{shown:>2}. {similarity:.2f}  {track.label}  [{details}, {track.camelot or '?'}]"
+        )
+        if shown == limit:
+            break
+    if not shown:
+        typer.echo("Aucun morceau ne correspond aux filtres.")

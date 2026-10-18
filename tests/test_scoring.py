@@ -50,3 +50,19 @@ def test_rank_next_prefers_harmonic_close_tempo(collection_xml: Path) -> None:
     ranked = rank_next(tracks[0], tracks)
     assert [t.candidate.track_id for t in ranked] == ["2", "3", "4"]
     assert ranked[-1].score < 0.2
+
+
+def test_style_similarity_counts_when_known() -> None:
+    current = _track("a", 124, "Am")
+    close = score_transition(current, _track("b", 124, "Am"), similarity=0.9).score
+    far = score_transition(current, _track("c", 124, "Am"), similarity=0.1).score
+    assert far < close < 1.0
+
+
+def test_rank_next_uses_neutral_style_for_unindexed_tracks() -> None:
+    current = _track("a", 124, "Am")
+    indexed = Track(track_id="b", title="b", location="b", bpm=124, key="Am")
+    unindexed = Track(track_id="c", title="c", location="c", bpm=124, key="Am")
+    ranked = rank_next(current, [current, indexed, unindexed], similarities={"b": 0.9})
+    assert [t.candidate.track_id for t in ranked] == ["b", "c"]
+    assert "style inconnu" in ranked[1].reasons

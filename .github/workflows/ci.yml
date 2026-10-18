@@ -25,7 +25,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - name: Install
-        run: uv sync --locked --all-extras
+        # Sans l'extra clap : torch pèse plusieurs Go, ses tests sont sautés en CI.
+        run: uv sync --locked --extra audio --extra index
       - name: Lint
         run: |
           uv run ruff check .

@@ -17,6 +17,13 @@ audio = [
     "soundfile>=0.12",
     "tinytag>=2.0",
 ]
+index = [
+    "lancedb>=0.13",
+]
+clap = [
+    "torch>=2.4",
+    "transformers>=4.45",
+]
 
 [project.scripts]
 setforge = "setforge.cli:app"
@@ -51,5 +58,5 @@ packages = ["setforge"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["librosa", "librosa.*"]
+module = ["librosa", "librosa.*", "pyarrow", "pyarrow.*", "lancedb", "lancedb.*", "torch", "torch.*", "transformers", "transformers.*"]
 ignore_missing_imports = true
