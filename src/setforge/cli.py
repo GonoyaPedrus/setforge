@@ -137,7 +137,13 @@ def scan(
             from setforge.index import TrackIndex
         except ImportError as error:
             raise _missing_extra("index") from error
-        embedder = _load_clap()  # avant le scan : une dépendance manquante échoue tout de suite
+        try:
+            # Vérifie l'extra tout de suite, mais ne charge le modèle qu'après l'analyse :
+            # inutile de garder CLAP en mémoire à côté des workers.
+            import torch  # noqa: F401
+            import transformers  # noqa: F401
+        except ImportError as error:
+            raise _missing_extra("clap") from error
 
     def show(step: str) -> Callable[[int, int], None]:
         return lambda done, total: typer.echo(f"\r{step} {done}/{total}", nl=done == total)
@@ -153,6 +159,7 @@ def scan(
     if not embeddings:
         return
 
+    embedder = _load_clap()
     embedded = embed_library(tracks, TrackIndex(index), embedder, progress=show("Embeddings"))
     typer.echo(
         f"{embedded.embedded} embeddings calculés, {embedded.cached} déjà à jour, "
