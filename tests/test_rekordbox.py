@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from setforge.rekordbox import load_collection, write_playlist
+from setforge.rekordbox import load_collection, location_to_path, write_playlist
 
 
 def test_load_collection(collection_xml: Path) -> None:
@@ -49,3 +49,11 @@ def test_tolerates_malformed_numbers(tmp_path: Path) -> None:
     track = load_collection(xml)[0]
     assert (track.duration, track.bpm) == (0, 124.5)
     assert (track.cues[0].start, track.cues[0].num) == (61.95, 0)
+
+
+def test_location_to_path() -> None:
+    assert location_to_path("file://localhost/Users/me/Music/a%20b.mp3") == Path(
+        "/Users/me/Music/a b.mp3"
+    )
+    assert location_to_path("file://localhost/C:/Music/x.flac") == Path("C:/Music/x.flac")
+    assert location_to_path("https://example.com/x.mp3") is None
