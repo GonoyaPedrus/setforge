@@ -1,8 +1,15 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from setforge.rekordbox import load_collection, location_to_path, write_playlist
+from setforge.rekordbox import (
+    load_collection,
+    location_to_path,
+    running_in_wsl,
+    write_playlist,
+    wsl_mount_root,
+)
 
 
 def test_load_collection(collection_xml: Path) -> None:
@@ -64,9 +71,37 @@ def test_location_to_path() -> None:
     assert location_to_path("https://example.com/x.mp3") is None
 
 
-def test_location_to_path_under_wsl(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def fresh_wsl_cache() -> Iterator[None]:
+    running_in_wsl.cache_clear()
+    wsl_mount_root.cache_clear()
+    yield
+    running_in_wsl.cache_clear()
+    wsl_mount_root.cache_clear()
+
+
+@pytest.mark.parametrize(("override", "root"), [("/win/", "/win"), ("", None), ("relatif", None)])
+def test_location_to_path_under_wsl(
+    monkeypatch: pytest.MonkeyPatch, fresh_wsl_cache: None, override: str, root: str | None
+) -> None:
+    monkeypatch.setenv("SETFORGE_WSL_MOUNT", override)
+    expected_root = root or wsl_mount_root()  # sinon /etc/wsl.conf ou /mnt
     url = "file://localhost/D:/Musique/Deep%20House/a.mp3"
-    assert location_to_path(url, wsl=True) == Path("/mnt/d/Musique/Deep House/a.mp3")
-    monkeypatch.setenv("SETFORGE_WSL_MOUNT", "/win/")
-    assert location_to_path(url, wsl=True) == Path("/win/d/Musique/Deep House/a.mp3")
+    assert location_to_path(url, wsl=True) == Path(f"{expected_root}/d/Musique/Deep House/a.mp3")
     assert location_to_path("file://localhost/Users/me/a.mp3", wsl=True) == Path("/Users/me/a.mp3")
+
+
+def test_default_mount_root_is_mnt(monkeypatch: pytest.MonkeyPatch, fresh_wsl_cache: None) -> None:
+    monkeypatch.delenv("SETFORGE_WSL_MOUNT", raising=False)
+    if Path("/etc/wsl.conf").exists():
+        pytest.skip("racine définie par /etc/wsl.conf sur cette machine")
+    assert wsl_mount_root() == "/mnt"
+
+
+def test_wsl_detected_from_environment(
+    monkeypatch: pytest.MonkeyPatch, fresh_wsl_cache: None
+) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    monkeypatch.setenv("SETFORGE_WSL_MOUNT", "/mnt")
+    assert location_to_path("file://localhost/C:/a.mp3") == Path("/mnt/c/a.mp3")
