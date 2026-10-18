@@ -78,6 +78,7 @@ def test_unreadable_db_falls_back_to_rekordbox(collection_xml: Path, tmp_path: P
 def _index_fixture(tmp_path: Path) -> Path:
     np = pytest.importorskip("numpy")
     pytest.importorskip("lancedb")
+    from setforge.embeddings import DEFAULT_MODEL
     from setforge.index import Embedding, TrackIndex
 
     path = tmp_path / "idx"
@@ -87,7 +88,9 @@ def _index_fixture(tmp_path: Path) -> Path:
         "sunrise.mp3": [1.0, 0.0],
     }
     TrackIndex(path).upsert(
-        Embedding(f"file://localhost/Music/{name}", 1.0, 1, "m", np.array(v, dtype=np.float32))
+        Embedding(
+            f"file://localhost/Music/{name}", 1.0, 1, DEFAULT_MODEL, np.array(v, dtype=np.float32)
+        )
         for name, v in vectors.items()
     )
     return path

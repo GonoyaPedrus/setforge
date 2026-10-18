@@ -40,7 +40,7 @@ def embed_library(
     """Calcule les embeddings absents, obsolètes (fichier modifié) ou d'un autre modèle."""
     report = EmbedReport()
     known = index.fingerprints()
-    jobs: list[tuple[str, Path, float, int]] = []
+    jobs: dict[str, tuple[Path, float, int]] = {}  # un fichier en double n'est calculé qu'une fois
     for track in tracks:
         path = location_to_path(track.location)
         if path is None or not path.is_file():
@@ -49,10 +49,10 @@ def embed_library(
         if known.get(track.location) == (stat.st_mtime, stat.st_size, embedder.name):
             report.cached += 1
         else:
-            jobs.append((track.location, path, stat.st_mtime, stat.st_size))
+            jobs[track.location] = (path, stat.st_mtime, stat.st_size)
 
     batch: list[Embedding] = []
-    for done, (location, path, mtime, size) in enumerate(jobs, start=1):
+    for done, (location, (path, mtime, size)) in enumerate(jobs.items(), start=1):
         try:
             vector = embedder.embed_file(path)
         except Exception as error:  # un fichier illisible ne bloque pas le scan

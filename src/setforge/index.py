@@ -59,6 +59,11 @@ class TrackIndex:
             }
             for e in batch
         ]
+        dimension = batch[0].vector.size
+        if self._table is not None and self._dimension() != dimension:
+            # Nouveau modèle d'une autre dimension : les anciens vecteurs ne servent plus.
+            self._db.drop_table(TABLE)
+            self._table = None
         if self._table is None:
             schema = pa.schema(
                 [
@@ -66,7 +71,7 @@ class TrackIndex:
                     ("mtime", pa.float64()),
                     ("size", pa.int64()),
                     ("model", pa.string()),
-                    ("vector", pa.list_(pa.float32(), batch[0].vector.size)),
+                    ("vector", pa.list_(pa.float32(), dimension)),
                 ]
             )
             self._table = self._db.create_table(TABLE, schema=schema)
@@ -77,18 +82,37 @@ class TrackIndex:
             .execute(rows)
         )
 
-    def vectors(self) -> dict[str, npt.NDArray[np.float32]]:
+    def _dimension(self) -> int:
+        return int(self._table.schema.field("vector").type.list_size)
+
+    def vectors(self, model: str) -> dict[str, npt.NDArray[np.float32]]:
+        """Vecteurs calculés avec ``model`` (ceux d'un autre modèle ne sont pas comparables)."""
         if self._table is None:
             return {}
-        rows = self._table.to_arrow().select(["location", "vector"]).to_pylist()
-        return {r["location"]: np.asarray(r["vector"], dtype=np.float32) for r in rows}
+        table = self._table.to_arrow().select(["location", "model", "vector"])
+        flat = table.column("vector").combine_chunks().flatten().to_numpy()
+        matrix = flat.reshape(table.num_rows, self._dimension()).astype(np.float32)
+        locations = table.column("location").to_pylist()
+        models = table.column("model").to_pylist()
+        return {
+            location: matrix[i]
+            for i, (location, row_model) in enumerate(zip(locations, models, strict=True))
+            if row_model == model
+        }
 
-    def search(self, vector: npt.NDArray[np.float32], limit: int) -> list[tuple[str, float]]:
-        """Plus proches voisins par similarité cosinus, du plus proche au plus lointain."""
+    def search(
+        self, vector: npt.NDArray[np.float32], model: str, limit: int | None = None
+    ) -> list[tuple[str, float]]:
+        """Morceaux du ``model`` par similarité cosinus décroissante (tous sans ``limit``)."""
         if self._table is None:
             return []
-        hits = self._table.search(vector).distance_type("cosine").limit(limit).to_list()
-        return [(hit["location"], 1.0 - float(hit["_distance"])) for hit in hits]
+        query = (
+            self._table.search(vector)
+            .distance_type("cosine")
+            .where(f"model = '{model.replace("'", "''")}'", prefilter=True)
+            .limit(limit or len(self))
+        )
+        return [(hit["location"], 1.0 - float(hit["_distance"])) for hit in query.to_list()]
 
 
 def similarities(

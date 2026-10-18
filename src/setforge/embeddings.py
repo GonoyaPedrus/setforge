@@ -22,6 +22,19 @@ WINDOW_POSITIONS = (0.25, 0.5, 0.75)
 Vector = npt.NDArray[np.float32]
 
 
+def window_offsets(
+    duration: float,
+    seconds: float = WINDOW_SECONDS,
+    positions: tuple[float, ...] = WINDOW_POSITIONS,
+) -> list[float]:
+    """Débuts (en secondes) des extraits centrés sur chaque position relative du morceau."""
+    if duration <= seconds:
+        return [0.0]
+    return sorted(
+        {min(max(p * duration - seconds / 2, 0.0), duration - seconds) for p in positions}
+    )
+
+
 def windows(
     y: npt.NDArray[np.float32],
     sr: int,
@@ -87,18 +100,26 @@ class ClapEmbedder:
 
     def embed_audio(self, y: npt.NDArray[np.float32]) -> Vector:
         """Embedding d'un signal mono à 48 kHz."""
-        inputs = self._feature_extractor(
-            windows(y, CLAP_SAMPLE_RATE), sampling_rate=CLAP_SAMPLE_RATE, return_tensors="pt"
-        )
+        return self._embed_windows(windows(y, CLAP_SAMPLE_RATE))
+
+    def _embed_windows(self, parts: list[npt.NDArray[np.float32]]) -> Vector:
+        inputs = self._feature_extractor(parts, sampling_rate=CLAP_SAMPLE_RATE, return_tensors="pt")
         with self._torch.no_grad():
             output = self._model.get_audio_features(**inputs.to(self._device))
         return normalize(_pooled(output).cpu().numpy())
 
     def embed_file(self, path: Path) -> Vector:
+        """Ne décode que les extraits utiles, pas le morceau entier."""
         import librosa
 
-        y, _ = librosa.load(path, sr=CLAP_SAMPLE_RATE, mono=True)
-        return self.embed_audio(y)
+        duration = librosa.get_duration(path=path)
+        parts = [
+            librosa.load(
+                path, sr=CLAP_SAMPLE_RATE, mono=True, offset=offset, duration=WINDOW_SECONDS
+            )[0]
+            for offset in window_offsets(duration)
+        ]
+        return self._embed_windows(parts)
 
     def embed_text(self, text: str) -> Vector:
         inputs = self._tokenizer([text], padding=True, return_tensors="pt")

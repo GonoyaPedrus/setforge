@@ -25,6 +25,7 @@ def test_embed_library_caches_by_file_and_model(tmp_path: Path) -> None:
         path.write_text("x")
     tracks = [Track(track_id=p.stem, title=p.stem, location=p.as_uri()) for p in files]
     tracks.append(Track(track_id="absent", title="absent", location="file:///nulle/part.mp3"))
+    tracks.append(tracks[0].model_copy(update={"track_id": "doublon"}))
     index = TrackIndex(tmp_path / "idx")
 
     report = embed_library(tracks, index, FakeEmbedder())
@@ -33,7 +34,7 @@ def test_embed_library_caches_by_file_and_model(tmp_path: Path) -> None:
     assert len(index) == 2
 
     again = embed_library(tracks, index, FakeEmbedder())
-    assert (again.embedded, again.cached) == (0, 2)
+    assert (again.embedded, again.cached) == (0, 3)  # le doublon compte comme à jour
 
     other = FakeEmbedder()
     other.name = "autre-modele"

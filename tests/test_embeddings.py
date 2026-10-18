@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from setforge.embeddings import CLAP_SAMPLE_RATE, normalize, windows
+from setforge.embeddings import CLAP_SAMPLE_RATE, normalize, window_offsets, windows
 
 
 def test_windows_cover_the_body_of_the_track() -> None:
@@ -10,6 +10,11 @@ def test_windows_cover_the_body_of_the_track() -> None:
     parts = windows(y, sr, seconds=10)
     assert [len(p) for p in parts] == [100, 100, 100]
     assert [int(p[0]) for p in parts] == [200, 450, 700]
+
+
+def test_window_offsets_match_windows() -> None:
+    assert window_offsets(100.0, seconds=10) == [20.0, 45.0, 70.0]
+    assert window_offsets(8.0, seconds=10) == [0.0]
 
 
 def test_windows_short_track_is_kept_whole() -> None:
@@ -68,3 +73,19 @@ def test_clap_embedder_on_tiny_random_model() -> None:
     assert audio.shape == text.shape == (16,)
     assert np.linalg.norm(audio) == pytest.approx(1, abs=1e-5)
     assert np.linalg.norm(text) == pytest.approx(1, abs=1e-5)
+
+
+def test_embed_file_reads_only_windows(tmp_path: object) -> None:
+    pytest.importorskip("librosa")
+    sf = pytest.importorskip("soundfile")
+    from pathlib import Path
+
+    from setforge.embeddings import ClapEmbedder
+
+    path = Path(str(tmp_path)) / "long.wav"
+    sf.write(path, np.zeros(CLAP_SAMPLE_RATE * 60, dtype=np.float32), CLAP_SAMPLE_RATE)
+    seen: list[int] = []
+    embedder = ClapEmbedder.__new__(ClapEmbedder)
+    embedder._embed_windows = lambda parts: seen.extend(len(p) for p in parts) or np.ones(2)  # type: ignore[method-assign]
+    embedder.embed_file(path)
+    assert seen == [CLAP_SAMPLE_RATE * 10] * 3

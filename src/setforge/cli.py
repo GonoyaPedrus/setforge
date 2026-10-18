@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from setforge.index import TrackIndex
 from setforge.camelot import parse_key
 from setforge.rekordbox import load_collection
-from setforge.scoring import bpm_delta_pct, rank_next
+from setforge.scoring import rank_next
 
 app = typer.Typer(help="SetForge, assistant DJ.", no_args_is_help=True)
 
@@ -176,9 +176,10 @@ def next_track(
     scores: dict[str, float] = {}
     track_index = _open_index(index)
     if track_index is not None:
+        from setforge.embeddings import DEFAULT_MODEL
         from setforge.index import similarities
 
-        vectors = track_index.vectors()
+        vectors = track_index.vectors(DEFAULT_MODEL)
         if current.location in vectors:
             scores = similarities(vectors[current.location], vectors)
     typer.echo(f"Après : {current.label}")
@@ -199,6 +200,11 @@ def search(
     index: IndexOption = DEFAULT_INDEX,
 ) -> None:
     """Cherche des morceaux par description, filtrés par BPM et tonalité."""
+    try:
+        from setforge.embeddings import DEFAULT_MODEL
+        from setforge.index import TrackIndex  # noqa: F401  (vérifie l'extra index)
+    except ImportError as error:
+        raise _missing_extra("index") from error
     track_index = _open_index(index)
     if track_index is None or not len(track_index):
         typer.echo("Index vide : lance d'abord « setforge scan --embeddings ».", err=True)
@@ -210,16 +216,15 @@ def search(
 
     by_location = {t.location: t for t in _load(xml, db)}
     vector = _load_clap().embed_text(query)
-    # Les filtres s'appliquent après la recherche : on prend large puis on trie.
-    hits = track_index.search(vector, limit=max(limit * 20, 200))
+    # Tout l'index est classé (quelques milliers de morceaux) puis filtré :
+    # un morceau qui passe les filtres n'est jamais écarté par une coupe arbitraire.
+    hits = track_index.search(vector, DEFAULT_MODEL)
     shown = 0
     for location, similarity in hits:
         track = by_location.get(location)
         if track is None:
             continue
-        if bpm is not None and (
-            track.bpm is None or abs(bpm_delta_pct(bpm, track.bpm)) * bpm / 100 > tolerance
-        ):
+        if bpm is not None and (track.bpm is None or abs(track.bpm - bpm) > tolerance):
             continue
         if wanted_key is not None and track.camelot != wanted_key:
             continue
