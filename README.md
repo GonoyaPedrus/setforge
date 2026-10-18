@@ -27,6 +27,9 @@ variable `SETFORGE_DB`). Un second scan ne réanalyse que les fichiers nouveaux 
 `stats` et `next` utilisent ensuite ces analyses ; le BPM et la tonalité de Rekordbox restent
 prioritaires. Les fichiers M4A/AAC demandent FFmpeg installé sur la machine.
 
+Sous WSL, les chemins Windows de Rekordbox (`C:/Music/...`) sont lus sous `/mnt/c/Music/...`
+(racine modifiable avec `SETFORGE_WSL_MOUNT`).
+
 ### Similarité de style et recherche en langage naturel
 
 ```bash

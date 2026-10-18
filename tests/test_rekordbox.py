@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from setforge.rekordbox import load_collection, location_to_path, write_playlist
 
 
@@ -55,6 +57,16 @@ def test_location_to_path() -> None:
     assert location_to_path("file://localhost/Users/me/Music/a%20b.mp3") == Path(
         "/Users/me/Music/a b.mp3"
     )
-    assert location_to_path("file://localhost/C:/Music/x.flac") == Path("C:/Music/x.flac")
+    assert location_to_path("file://localhost/C:/Music/x.flac", wsl=False) == Path(
+        "C:/Music/x.flac"
+    )
     assert location_to_path("file://nas/Music/x.mp3") == Path("//nas/Music/x.mp3")
     assert location_to_path("https://example.com/x.mp3") is None
+
+
+def test_location_to_path_under_wsl(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = "file://localhost/D:/Musique/Deep%20House/a.mp3"
+    assert location_to_path(url, wsl=True) == Path("/mnt/d/Musique/Deep House/a.mp3")
+    monkeypatch.setenv("SETFORGE_WSL_MOUNT", "/win/")
+    assert location_to_path(url, wsl=True) == Path("/win/d/Musique/Deep House/a.mp3")
+    assert location_to_path("file://localhost/Users/me/a.mp3", wsl=True) == Path("/Users/me/a.mp3")

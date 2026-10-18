@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import platform
 import re
+import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
+from functools import cache
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -55,10 +59,18 @@ def _parse_track(node: ET.Element) -> Track:
     )
 
 
-def location_to_path(location: str) -> Path | None:
+@cache
+def running_in_wsl() -> bool:
+    """Vrai sous Windows Subsystem for Linux, où les disques Windows sont sous /mnt."""
+    return sys.platform == "linux" and "microsoft" in platform.uname().release.lower()
+
+
+def location_to_path(location: str, wsl: bool | None = None) -> Path | None:
     """Convertit ``file://localhost/Users/...`` ou ``file://localhost/C:/...`` en chemin local.
 
     Un hôte réel (``file://nas/Music/...``) donne un chemin réseau ``//nas/Music/...``.
+    Sous WSL (détecté si ``wsl`` est None), ``C:/Music`` devient ``/mnt/c/Music`` ; la racine
+    se change avec ``SETFORGE_WSL_MOUNT`` si ``/etc/wsl.conf`` en définit une autre.
     """
     parsed = urlparse(location)
     if parsed.scheme != "file":
@@ -66,7 +78,10 @@ def location_to_path(location: str) -> Path | None:
     path = unquote(parsed.path)
     if parsed.netloc not in ("", "localhost"):
         return Path(f"//{parsed.netloc}{path}")
-    if re.match(r"^/[A-Za-z]:/", path):  # chemin Windows
+    if drive := re.match(r"^/([A-Za-z]):/", path):  # chemin Windows
+        if running_in_wsl() if wsl is None else wsl:
+            root = os.environ.get("SETFORGE_WSL_MOUNT", "/mnt").rstrip("/")
+            return Path(f"{root}/{drive.group(1).lower()}/{path[4:]}")
         path = path[1:]
     return Path(path)
 
