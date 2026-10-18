@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import configparser
+import contextlib
+import os
+import platform
 import re
+import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
+from functools import cache
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -55,10 +61,37 @@ def _parse_track(node: ET.Element) -> Track:
     )
 
 
-def location_to_path(location: str) -> Path | None:
+@cache
+def running_in_wsl() -> bool:
+    """Vrai sous Windows Subsystem for Linux, où les disques Windows sont montés sous Linux."""
+    if sys.platform != "linux":
+        return False
+    return (
+        "WSL_DISTRO_NAME" in os.environ
+        or Path("/proc/sys/fs/binfmt_misc/WSLInterop").exists()
+        or "microsoft" in platform.uname().release.lower()
+    )
+
+
+@cache
+def wsl_mount_root() -> str:
+    """Racine des disques Windows : SETFORGE_WSL_MOUNT, sinon /etc/wsl.conf, sinon /mnt."""
+    override = os.environ.get("SETFORGE_WSL_MOUNT", "").strip()
+    if override.startswith("/"):
+        return override.rstrip("/")
+    config = configparser.ConfigParser()
+    with contextlib.suppress(OSError, configparser.Error):
+        config.read("/etc/wsl.conf")
+    root = config.get("automount", "root", fallback="/mnt").strip().strip('"')
+    return root.rstrip("/") if root.startswith("/") else "/mnt"
+
+
+def location_to_path(location: str, wsl: bool | None = None) -> Path | None:
     """Convertit ``file://localhost/Users/...`` ou ``file://localhost/C:/...`` en chemin local.
 
     Un hôte réel (``file://nas/Music/...``) donne un chemin réseau ``//nas/Music/...``.
+    Sous WSL (détecté si ``wsl`` est None), ``C:/Music`` devient ``/mnt/c/Music``, ou suit la
+    racine de ``wsl_mount_root``.
     """
     parsed = urlparse(location)
     if parsed.scheme != "file":
@@ -66,7 +99,9 @@ def location_to_path(location: str) -> Path | None:
     path = unquote(parsed.path)
     if parsed.netloc not in ("", "localhost"):
         return Path(f"//{parsed.netloc}{path}")
-    if re.match(r"^/[A-Za-z]:/", path):  # chemin Windows
+    if drive := re.match(r"^/([A-Za-z]):/", path):  # chemin Windows
+        if running_in_wsl() if wsl is None else wsl:
+            return Path(f"{wsl_mount_root()}/{drive.group(1).lower()}/{path[4:]}")
         path = path[1:]
     return Path(path)
 
