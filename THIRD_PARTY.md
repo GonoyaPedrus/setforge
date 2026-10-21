@@ -12,7 +12,7 @@ doivent jamais être importés hors de `experiments/`.
 | librosa | Features DSP | ISC (dépend de soxr, LGPL-2.1+) | Extra `audio` |
 | soundfile | Décodage WAV/FLAC/AIFF | BSD-3-Clause (embarque libsndfile, LGPL-2.1) | Extra `audio` |
 | tinytag | Lecture des tags | MIT | Extra `audio` |
-| LAION CLAP `larger_clap_music` | Embeddings audio-texte | Apache-2.0 (fiche Hugging Face, vérifiée le 2026-10-18) | Extra `clap` ; poids non redistribués, téléchargés par l'utilisateur. Données d'entraînement (LAION-Audio-630K et musique) à auditer avant une version payante |
+| LAION CLAP `larger_clap_general` | Embeddings audio-texte | Apache-2.0 (README du dépôt Hugging Face, vérifié le 2026-10-21) | Extra `clap` ; poids non redistribués, téléchargés par l'utilisateur. Données d'entraînement (LAION-Audio-630K et musique) à auditer avant une version payante |
 | torch, transformers | Inférence CLAP | BSD-3-Clause / Apache-2.0 | Extra `clap` |
 | lancedb, pyarrow | Index vectoriel | Apache-2.0 | Extra `index` |
 | Demucs v4 | Séparation de stems | MIT | Prévu, optionnel |

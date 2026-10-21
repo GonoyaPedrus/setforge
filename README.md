@@ -40,7 +40,7 @@ uv run setforge next --xml ~/rekordbox.xml "night drive"
 uv run setforge search --xml ~/rekordbox.xml "deep house sombre" --bpm 124 --key 8A
 ```
 
-`--embeddings` calcule un embedding CLAP ([laion/larger_clap_music](https://huggingface.co/laion/larger_clap_music),
+`--embeddings` calcule un embedding CLAP ([laion/larger_clap_general](https://huggingface.co/laion/larger_clap_general),
 téléchargé au premier lancement) sur trois extraits de 10 s de chaque morceau, et le range dans
 l'index LanceDB `~/.setforge/index` (option `--index` ou variable `SETFORGE_INDEX`). `next` ajoute
 alors la proximité de style au score ; `search` compare ta description aux morceaux dans le même
