@@ -89,3 +89,16 @@ def test_embed_file_reads_only_windows(tmp_path: object) -> None:
     embedder._embed_windows = lambda parts: seen.extend(len(p) for p in parts) or np.ones(2)  # type: ignore[method-assign]
     embedder.embed_file(path)
     assert seen == [CLAP_SAMPLE_RATE * 10] * 3
+
+
+def test_check_trained_rejects_untrained_projections() -> None:
+    torch = pytest.importorskip("torch")
+    from setforge.embeddings import check_trained
+
+    class Model:
+        logit_scale_t = torch.nn.Parameter(torch.tensor(0.0))  # exp(0) = 1 : non entraîné
+
+    with pytest.raises(ValueError, match="inutilisable"):
+        check_trained(Model())
+    Model.logit_scale_t = torch.nn.Parameter(torch.tensor(2.659))  # log(1/0.07)
+    check_trained(Model())

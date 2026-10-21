@@ -1,7 +1,9 @@
 """Embeddings audio et texte CLAP, dans un même espace vectoriel.
 
 Nécessite l'extra ``clap`` (torch, transformers). Modèle par défaut : LAION
-``larger_clap_music`` (Apache-2.0), téléchargé depuis Hugging Face au premier usage.
+``larger_clap_general`` (Apache-2.0), téléchargé depuis Hugging Face au premier usage.
+``larger_clap_music`` est écarté : son checkpoint publié a des projections non entraînées
+(logit_scale ≈ 1, textes quasi identiques), le zero-shot y est uniforme.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-DEFAULT_MODEL = "laion/larger_clap_music"
+DEFAULT_MODEL = "laion/larger_clap_general"
 CLAP_SAMPLE_RATE = 48_000
 # CLAP lit 10 s d'audio : on en prend plusieurs dans le corps du morceau, loin de l'intro.
 WINDOW_SECONDS = 10.0
@@ -58,6 +60,21 @@ def normalize(vectors: npt.NDArray[np.floating]) -> Vector:
     return (mean / norm).astype(np.float32)
 
 
+# Un CLAP entraîné a une température proche de 1/0.07 ≈ 14 ; autour de 1, les projections
+# n'ont pas été apprises et texte et audio ne se répondent plus.
+MIN_LOGIT_SCALE = 2.0
+
+
+def check_trained(model: Any) -> None:
+    """Refuse un checkpoint dont la température texte-audio trahit des projections non apprises."""
+    scale = float(model.logit_scale_t.detach().exp())
+    if scale < MIN_LOGIT_SCALE:
+        raise ValueError(
+            f"checkpoint CLAP inutilisable (logit_scale {scale:.2f} < {MIN_LOGIT_SCALE}) : "
+            "projections non entraînées"
+        )
+
+
 def _pooled(output: Any) -> Any:
     # transformers 5 renvoie un ModelOutput, la 4.x directement le tenseur projeté.
     return getattr(output, "pooler_output", output)
@@ -95,6 +112,7 @@ class ClapEmbedder:
         )
         processor: Any = ClapProcessor.from_pretrained(name)
         model: Any = ClapModel.from_pretrained(name)
+        check_trained(model)
         model = model.to(device)
         return cls(model, processor.feature_extractor, processor.tokenizer, name)
 
